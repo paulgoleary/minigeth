@@ -36,9 +36,10 @@ type jsonresp struct {
 }
 
 type jsonresps struct {
-	Jsonrpc string `json:"jsonrpc"`
-	Id      uint64 `json:"id"`
-	Result  string `json:"result"`
+	Jsonrpc string                 `json:"jsonrpc"`
+	Id      uint64                 `json:"id"`
+	Result  string                 `json:"result"`
+	Error   map[string]interface{} `json:"error"`
 }
 
 type jsonrespi struct {
@@ -79,7 +80,8 @@ type Account struct {
 	CodeHash []byte
 }
 
-var nodeUrl = "https://mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161"
+// var nodeUrl = "https://mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161"
+var nodeUrl = "http://ec2-52-53-239-185.us-west-1.compute.amazonaws.com:8545"
 
 func SetNodeUrl(newNodeUrl string) {
 	nodeUrl = newNodeUrl
@@ -111,11 +113,14 @@ func getAPI(jsonData []byte) io.Reader {
 	if cacheExists(key) {
 		return bytes.NewReader(cacheRead(key))
 	}
-	resp, _ := http.Post(nodeUrl, "application/json", bytes.NewBuffer(jsonData))
-	defer resp.Body.Close()
-	ret, _ := ioutil.ReadAll(resp.Body)
-	cacheWrite(key, ret)
-	return bytes.NewReader(ret)
+	if resp, err := http.Post(nodeUrl, "application/json", bytes.NewBuffer(jsonData)); err == nil {
+		defer resp.Body.Close()
+		ret, _ := ioutil.ReadAll(resp.Body)
+		cacheWrite(key, ret)
+		return bytes.NewReader(ret)
+	} else {
+		return nil
+	}
 }
 
 var unhashMap = make(map[common.Hash]common.Address)
@@ -369,5 +374,16 @@ func getProvedCodeBytes(blockNumber *big.Int, addrHash common.Hash) []byte {
 
 	ret, _ := hex.DecodeString(jr.Result[2:])
 	//fmt.Println(ret)
+	return ret
+}
+
+func getRawStorage(storageHash common.Hash) []byte {
+	r := jsonreq{Jsonrpc: "2.0", Method: "bor_getRawStorage", Id: 1}
+	r.Params = make([]interface{}, 1)
+	r.Params[0] = storageHash.Hex()
+	jsonData, _ := json.Marshal(r)
+	jr := jsonresps{}
+	json.NewDecoder(getAPI(jsonData)).Decode(&jr)
+	ret, _ := hex.DecodeString(jr.Result[2:])
 	return ret
 }

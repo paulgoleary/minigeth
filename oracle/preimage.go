@@ -39,6 +39,10 @@ func Preimage(hash common.Hash) []byte {
 	return val
 }
 
+func RawStorage(storageHash common.Hash) []byte {
+	return getRawStorage(storageHash)
+}
+
 func Preimages() map[common.Hash][]byte {
 	return preimages
 }

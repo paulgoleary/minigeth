@@ -76,12 +76,16 @@ func main() {
 	var parent types.Header
 	check(rlp.DecodeBytes(oracle.Preimage(inputs[0]), &parent))
 
+	useConfig := params.MainnetChainConfig
+	if true {
+		useConfig = params.BorMainnetChainConfig
+	}
 	// read header
 	var newheader types.Header
 	// from parent
 	newheader.ParentHash = parent.Hash()
 	newheader.Number = big.NewInt(0).Add(parent.Number, big.NewInt(1))
-	newheader.BaseFee = misc.CalcBaseFee(params.MainnetChainConfig, &parent)
+	newheader.BaseFee = misc.CalcBaseFee(useConfig, &parent)
 
 	// from input oracle
 	newheader.TxHash = inputs[1]
@@ -92,9 +96,10 @@ func main() {
 
 	bc := core.NewBlockChain(&parent)
 	database := state.NewDatabase(parent)
+	fmt.Println("parent.Root:", parent.Root.String())
 	statedb, _ := state.New(parent.Root, database, nil)
 	vmconfig := vm.Config{}
-	processor := core.NewStateProcessor(params.MainnetChainConfig, bc, bc.Engine())
+	processor := core.NewStateProcessor(useConfig, bc, bc.Engine())
 	fmt.Println("processing state:", parent.Number, "->", newheader.Number)
 
 	newheader.Difficulty = bc.Engine().CalcDifficulty(bc, newheader.Time, &parent)
