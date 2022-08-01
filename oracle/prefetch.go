@@ -81,7 +81,8 @@ type Account struct {
 }
 
 // var nodeUrl = "https://mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161"
-var nodeUrl = "http://ec2-52-53-239-185.us-west-1.compute.amazonaws.com:8545"
+// var nodeUrl = "http://ec2-52-53-239-185.us-west-1.compute.amazonaws.com:8545"
+var nodeUrl = "https://polygon-rpc.com"
 
 func SetNodeUrl(newNodeUrl string) {
 	nodeUrl = newNodeUrl
@@ -138,8 +139,8 @@ func PrefetchStorage(blockNumber *big.Int, addr common.Address, skey common.Hash
 	}
 	cached[key] = true
 
-	ap := getProofAccount(blockNumber, addr, skey, true)
-	//fmt.Println("PrefetchStorage", blockNumber, addr, skey, len(ap))
+	ap := GetProofAccount(blockNumber, addr, skey, true)
+	fmt.Println("PrefetchStorage", blockNumber, addr, skey, len(ap))
 	newPreimages := make(map[common.Hash][]byte)
 	for _, s := range ap {
 		ret, _ := hex.DecodeString(s[2:])
@@ -164,7 +165,7 @@ func PrefetchAccount(blockNumber *big.Int, addr common.Address, postProcess func
 	}
 	cached[key] = true
 
-	ap := getProofAccount(blockNumber, addr, common.Hash{}, false)
+	ap := GetProofAccount(blockNumber, addr, common.Hash{}, false)
 	newPreimages := make(map[common.Hash][]byte)
 	for _, s := range ap {
 		ret, _ := hex.DecodeString(s[2:])
@@ -261,7 +262,19 @@ func prefetchUncles(blockHash common.Hash, uncleHash common.Hash, hasher types.T
 	preimages[hash] = unclesRlp
 }
 
-func PrefetchBlock(blockNumber *big.Int, startBlock bool, hasher types.TrieHasher) {
+func GetBlockNumber() *big.Int {
+	r := jsonreq{Jsonrpc: "2.0", Method: "eth_blockNumber", Id: 1}
+	jsonData, err := json.Marshal(r)
+	check(err)
+
+	jr := jsonresps{}
+	check(json.NewDecoder(getAPI(jsonData)).Decode(&jr))
+	ret := big.NewInt(0)
+	ret, _ = ret.SetString(jr.Result[2:], 16)
+	return ret
+}
+
+func GetBlockHeader(blockNumber *big.Int) types.Header {
 	r := jsonreq{Jsonrpc: "2.0", Method: "eth_getBlockByNumber", Id: 1}
 	r.Params = make([]interface{}, 2)
 	r.Params[0] = fmt.Sprintf("0x%x", blockNumber.Int64())
@@ -269,8 +282,19 @@ func PrefetchBlock(blockNumber *big.Int, startBlock bool, hasher types.TrieHashe
 	jsonData, err := json.Marshal(r)
 	check(err)
 
-	/*dat, _ := ioutil.ReadAll(getAPI(jsonData))
-	fmt.Println(string(dat))*/
+	jr := jsonrespt{}
+	check(json.NewDecoder(getAPI(jsonData)).Decode(&jr))
+	//fmt.Println(jr.Result)
+	return jr.Result.ToHeader()
+}
+
+func PrefetchBlock(blockNumber *big.Int, startBlock bool, hasher types.TrieHasher) {
+	r := jsonreq{Jsonrpc: "2.0", Method: "eth_getBlockByNumber", Id: 1}
+	r.Params = make([]interface{}, 2)
+	r.Params[0] = fmt.Sprintf("0x%x", blockNumber.Int64())
+	r.Params[1] = true
+	jsonData, err := json.Marshal(r)
+	check(err)
 
 	jr := jsonrespt{}
 	check(json.NewDecoder(getAPI(jsonData)).Decode(&jr))
@@ -337,7 +361,7 @@ func PrefetchBlock(blockNumber *big.Int, startBlock bool, hasher types.TrieHashe
 	prefetchUncles(blockHeader.Hash(), blockHeader.UncleHash, hasher)
 }
 
-func getProofAccount(blockNumber *big.Int, addr common.Address, skey common.Hash, storage bool) []string {
+func GetProofAccount(blockNumber *big.Int, addr common.Address, skey common.Hash, storage bool) []string {
 	addrHash := crypto.Keccak256Hash(addr[:])
 	unhashMap[addrHash] = addr
 

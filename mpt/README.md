@@ -1,0 +1,1 @@
+Cribbed from https://github.com/zhangchiqing/merkle-patricia-trie
