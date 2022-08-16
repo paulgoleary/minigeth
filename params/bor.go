@@ -19,6 +19,10 @@ type BorConfig struct {
 	JaipurBlock              uint64                 `json:"jaipurBlock"`   // Jaipur switch block (nil = no fork, 0 = already on jaipur)
 }
 
+func (c *BorConfig) IsJaipur(number uint64) bool {
+	return number >= c.JaipurBlock
+}
+
 var (
 	BorMainnetChainConfig = &ChainConfig{
 		ChainID:             big.NewInt(137),

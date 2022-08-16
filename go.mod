@@ -10,6 +10,9 @@ require (
 )
 
 require (
+	github.com/emirpasic/gods v1.18.1 // indirect
+	github.com/google/uuid v1.1.2 // indirect
+	github.com/heimdalr/dag v1.2.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/objx v0.4.0 // indirect
 	github.com/stretchr/testify v1.8.0 // indirect

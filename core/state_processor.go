@@ -73,6 +73,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 			misc.ApplyDAOHardFork(statedb)
 		}
 	*/
+
 	blockContext := NewEVMBlockContext(header, p.bc, nil)
 	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, p.config, cfg)
 	// Iterate over and process the individual transactions

@@ -5,9 +5,12 @@ package oracle
 
 import (
 	"bytes"
+	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/ethereum/go-ethereum/params"
+	"golang.org/x/crypto/sha3"
 	"io"
 	"io/ioutil"
 	"log"
@@ -199,8 +202,40 @@ func InputHash() common.Hash {
 	return inputhash
 }
 
-var inputs [6]common.Hash
+// var inputs [6]common.Hash
 var outputs [2]common.Hash
+
+// 	inputs[1] = blockHeader.TxHash
+//	inputs[2] = blockHeader.Coinbase.Hash()
+//	inputs[3] = blockHeader.UncleHash
+//	inputs[4] = common.BigToHash(big.NewInt(int64(blockHeader.GasLimit)))
+//	inputs[5] = common.BigToHash(big.NewInt(int64(blockHeader.Time)))
+
+var inputs Inputs
+
+type Inputs struct {
+	ParentHash common.Hash
+	TxHash     common.Hash
+	Coinbase   common.Address
+	UncleHash  common.Hash
+	GasLimit   uint64
+	Time       uint64
+
+	Signer common.Address
+}
+
+func (i Inputs) Bytes() []byte {
+	bb := bytes.Buffer{}
+	enc := gob.NewEncoder(&bb)
+	enc.Encode(i)
+	return bb.Bytes()
+}
+
+func (i *Inputs) FromBytes(inputBytes []byte) {
+	bb := bytes.NewReader(inputBytes)
+	dec := gob.NewDecoder(bb)
+	dec.Decode(i)
+}
 
 func Output(output common.Hash, receipts common.Hash) {
 	if receipts != outputs[1] {
@@ -288,6 +323,67 @@ func GetBlockHeader(blockNumber *big.Int) types.Header {
 	return jr.Result.ToHeader()
 }
 
+var extraSeal = 65
+
+func encodeSigHeader(w io.Writer, header *types.Header) {
+	enc := []interface{}{
+		header.ParentHash,
+		header.UncleHash,
+		header.Coinbase,
+		header.Root,
+		header.TxHash,
+		header.ReceiptHash,
+		header.Bloom,
+		header.Difficulty,
+		header.Number,
+		header.GasLimit,
+		header.GasUsed,
+		header.Time,
+		header.Extra[:len(header.Extra)-65], // Yes, this will panic if extra is too short
+		header.MixDigest,
+		header.Nonce,
+	}
+
+	if params.BorMainnetChainConfig.Bor.IsJaipur(header.Number.Uint64()) {
+		if header.BaseFee != nil {
+			enc = append(enc, header.BaseFee)
+		}
+	}
+
+	if err := rlp.Encode(w, enc); err != nil {
+		panic("can't encode: " + err.Error())
+	}
+}
+
+func SealHash(header *types.Header) (hash common.Hash) {
+	hasher := sha3.NewLegacyKeccak256()
+	encodeSigHeader(hasher, header)
+	hasher.Sum(hash[:0])
+
+	return hash
+}
+
+func BorEcrecover(header *types.Header) (common.Address, error) {
+	// Retrieve the signature from the header extra-data
+	if len(header.Extra) < extraSeal {
+		return common.Address{}, fmt.Errorf("errMissingSignature")
+	}
+
+	signature := header.Extra[len(header.Extra)-extraSeal:]
+
+	// Recover the public key and the Ethereum address
+	pubkey, err := crypto.Ecrecover(SealHash(header).Bytes(), signature)
+	if err != nil {
+		return common.Address{}, err
+	}
+
+	var signer common.Address
+
+	copy(signer[:], crypto.Keccak256(pubkey[1:])[12:])
+
+	return signer, nil
+}
+
 func PrefetchBlock(blockNumber *big.Int, startBlock bool, hasher types.TrieHasher) {
 	r := jsonreq{Jsonrpc: "2.0", Method: "eth_getBlockByNumber", Id: 1}
 	r.Params = make([]interface{}, 2)
@@ -308,32 +404,33 @@ func PrefetchBlock(blockNumber *big.Int, startBlock bool, hasher types.TrieHashe
 		hash := crypto.Keccak256Hash(blockHeaderRlp)
 		preimages[hash] = blockHeaderRlp
 		emptyHash := common.Hash{}
-		if inputs[0] == emptyHash {
-			inputs[0] = hash
+		if inputs.ParentHash == emptyHash {
+			inputs.ParentHash = hash
 		}
 		return
 	}
 
 	// second block
-	if blockHeader.ParentHash != inputs[0] {
-		fmt.Println(blockHeader.ParentHash, inputs[0])
+	if blockHeader.ParentHash != inputs.ParentHash {
+		fmt.Println(blockHeader.ParentHash, inputs.ParentHash)
 		panic("block transition isn't correct")
 	}
-	inputs[1] = blockHeader.TxHash
-	inputs[2] = blockHeader.Coinbase.Hash()
-	inputs[3] = blockHeader.UncleHash
-	inputs[4] = common.BigToHash(big.NewInt(int64(blockHeader.GasLimit)))
-	inputs[5] = common.BigToHash(big.NewInt(int64(blockHeader.Time)))
+	inputs.TxHash = blockHeader.TxHash
+	inputs.Coinbase = blockHeader.Coinbase
+	inputs.UncleHash = blockHeader.UncleHash
+	inputs.GasLimit = blockHeader.GasLimit
+	inputs.Time = blockHeader.Time
+
+	if inputs.Signer, err = BorEcrecover(&blockHeader); err != nil {
+		panic(err)
+	}
+	println(fmt.Sprintf("block signer: %v", inputs.Signer.String()))
 
 	// save the inputs
-	saveinput := make([]byte, 0)
-	for i := 0; i < len(inputs); i++ {
-		saveinput = append(saveinput, inputs[i].Bytes()[:]...)
-	}
+	saveinput := inputs.Bytes()
 	inputhash = crypto.Keccak256Hash(saveinput)
 	preimages[inputhash] = saveinput
 	ioutil.WriteFile(fmt.Sprintf("%s/input", root), inputhash.Bytes(), 0644)
-	//ioutil.WriteFile(fmt.Sprintf("%s/input", root), saveinput, 0644)
 
 	// secret input aka output
 	outputs[0] = blockHeader.Root
@@ -354,7 +451,8 @@ func PrefetchBlock(blockNumber *big.Int, startBlock bool, hasher types.TrieHashe
 	testTxHash := types.DeriveSha(types.Transactions(txs), hasher)
 	if testTxHash != blockHeader.TxHash {
 		fmt.Println(testTxHash, "!=", blockHeader.TxHash)
-		panic("tx hash derived wrong")
+		// panic("tx hash derived wrong")
+		println("WARNING: tx hash derived wrong???")
 	}
 
 	// save the uncles

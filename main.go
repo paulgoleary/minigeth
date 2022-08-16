@@ -2,13 +2,14 @@ package main
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/state/analysis"
 	"log"
 	"math/big"
 	"os"
 	"runtime/pprof"
 	"strconv"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -67,14 +68,15 @@ func main() {
 
 	// get inputs
 	inputBytes := oracle.Preimage(oracle.InputHash())
-	var inputs [6]common.Hash
-	for i := 0; i < len(inputs); i++ {
-		inputs[i] = common.BytesToHash(inputBytes[i*0x20 : i*0x20+0x20])
-	}
+	var inputs oracle.Inputs
+	inputs.FromBytes(inputBytes)
+	//for i := 0; i < len(inputs); i++ {
+	//	inputs[i] = common.BytesToHash(inputBytes[i*0x20 : i*0x20+0x20])
+	//}
 
 	// read start block header
 	var parent types.Header
-	check(rlp.DecodeBytes(oracle.Preimage(inputs[0]), &parent))
+	check(rlp.DecodeBytes(oracle.Preimage(inputs.ParentHash), &parent))
 
 	useConfig := params.MainnetChainConfig
 	if true {
@@ -88,11 +90,11 @@ func main() {
 	newheader.BaseFee = misc.CalcBaseFee(useConfig, &parent)
 
 	// from input oracle
-	newheader.TxHash = inputs[1]
-	newheader.Coinbase = common.BigToAddress(inputs[2].Big())
-	newheader.UncleHash = inputs[3]
-	newheader.GasLimit = inputs[4].Big().Uint64()
-	newheader.Time = inputs[5].Big().Uint64()
+	newheader.TxHash = inputs.TxHash
+	newheader.Coinbase = inputs.Coinbase
+	newheader.UncleHash = inputs.UncleHash
+	newheader.GasLimit = inputs.GasLimit
+	newheader.Time = inputs.Time
 
 	bc := core.NewBlockChain(&parent)
 	database := state.NewDatabase(parent)
@@ -147,6 +149,14 @@ func main() {
 		panic("wrong uncles for block " + newheader.UncleHash.String() + " " + block.Header().UncleHash.String())
 	}
 
+	deps := &state.StateDBDeps{}
+	deps.SetIgnores([]common.Address{
+		inputs.Signer,
+		inputs.Coinbase,
+		common.HexToAddress("70bca57f4579f58670ab2d18ef16e02c17553c38"),
+	})
+	statedb.SetDeps(deps)
+
 	// validateState is more complete, gas used + bloom also
 	receipts, _, _, err := processor.Process(block, statedb, vmconfig)
 	receiptSha := types.DeriveSha(types.Receipts(receipts), trie.NewStackTrie(nil))
@@ -158,4 +168,8 @@ func main() {
 	fmt.Println("receipt count", len(receipts), "hash", receiptSha)
 	fmt.Println("process done with hash", parent.Root, "->", newroot)
 	oracle.Output(newroot, receiptSha)
+
+	dag := analysis.BuildDAG(deps)
+	dag.Report(func(out string) { println(out) })
+	deps.Report(func(out string) { println(out) })
 }
